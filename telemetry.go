@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"time"
 )
 
 var (
@@ -59,7 +60,7 @@ func New(_ context.Context, logName string, level *slog.LevelVar) *slog.Logger {
 			return
 		}
 		tp := sdktrace.NewTracerProvider(
-			sdktrace.WithSyncer(exp),
+			sdktrace.WithBatcher(exp),
 			sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.AlwaysSample())),
 		)
 		otel.SetTracerProvider(tp)
@@ -84,9 +85,19 @@ func New(_ context.Context, logName string, level *slog.LevelVar) *slog.Logger {
 
 // NewHTTPHandler wraps h so each request opens an OTel server span fed by the
 // inbound X-Cloud-Trace-Context / traceparent headers, and subsequent
-// handlers can reach that span via r.Context().
+// handlers can reach that span via r.Context(). On request completion it
+// force-flushes the span batch to Cloud Trace so Cloud Functions gen2's pause-
+// between-invocations behaviour doesn't silently drop spans.
 func NewHTTPHandler(h http.Handler, operation string) http.Handler {
-	return otelhttp.NewHandler(h, operation, otelhttp.WithPropagators(otel.GetTextMapPropagator()))
+	wrapped := otelhttp.NewHandler(h, operation, otelhttp.WithPropagators(otel.GetTextMapPropagator()))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		wrapped.ServeHTTP(w, r)
+		if sharedState.tp != nil {
+			flushCtx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+			_ = sharedState.tp.ForceFlush(flushCtx)
+			cancel()
+		}
+	})
 }
 
 // Shutdown flushes pending trace spans and log entries. Safe to call when
