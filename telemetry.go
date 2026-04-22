@@ -93,7 +93,10 @@ func NewHTTPHandler(h http.Handler, operation string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		wrapped.ServeHTTP(w, r)
 		if sharedState.tp != nil {
-			flushCtx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+			// Detach from r.Context() — Go's HTTP server cancels it as soon as
+			// ServeHTTP returns, which would also cancel the in-flight export
+			// and produce "context canceled" errors on every flush.
+			flushCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			_ = sharedState.tp.ForceFlush(flushCtx)
 			cancel()
 		}
