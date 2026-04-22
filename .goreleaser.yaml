@@ -1,0 +1,21 @@
+version: 2
+
+project_name: gcf-telemetry
+
+builds:
+  - skip: true
+
+release:
+  github:
+    owner: two-inc
+    name: gcf-telemetry
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
