@@ -22,6 +22,7 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
+	"google.golang.org/api/option"
 	"io"
 	"log/slog"
 	"net/http"
@@ -29,6 +30,28 @@ import (
 	"sync"
 	"time"
 )
+
+// cloudPlatformScope is the only OAuth scope the Cloud Trace exporter is
+// allowed to ask for.
+//
+// Left to itself the exporter's client requests the Cloud Trace API's own
+// default scope, https://www.googleapis.com/auth/trace.append. Cloud Run's
+// metadata server refuses scopes outside the instance's allowed set with
+// `403 ... requested scope not allowed`, and the refusal is not contained to
+// the trace export: subsequent token fetches on the same instance get the
+// same 403, so every service-account-authenticated call (Firestore, Secret
+// Manager, …) fails Unauthenticated until the instance is recycled. The
+// exporter's batcher retries every 5s, so a single instance also floods
+// stderr for as long as it lives.
+//
+// cloud-platform is the scope Cloud Run instances actually carry, and it is a
+// superset of trace.append, so requesting it explicitly keeps trace export
+// working and keeps the metadata server out of the refusal path.
+const cloudPlatformScope = "https://www.googleapis.com/auth/cloud-platform"
+
+// traceScopes is a var (not inlined) so a test can pin it — regressing to the
+// API-default scope is silent until an instance's auth stops working.
+var traceScopes = []string{cloudPlatformScope}
 
 var (
 	setupOnce   sync.Once
@@ -54,7 +77,12 @@ func New(_ context.Context, logName string, level *slog.LevelVar) *slog.Logger {
 
 	var setupErr error
 	setupOnce.Do(func() {
-		exp, err := texporter.New(texporter.WithProjectID(projectID))
+		exp, err := texporter.New(
+			texporter.WithProjectID(projectID),
+			texporter.WithTraceClientOptions([]option.ClientOption{
+				option.WithScopes(traceScopes...),
+			}),
+		)
 		if err != nil {
 			setupErr = fmt.Errorf("cloud trace exporter: %w", err)
 			return
