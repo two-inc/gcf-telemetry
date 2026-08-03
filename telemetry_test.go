@@ -72,3 +72,19 @@ func decodeJSONLine(t *testing.T, raw []byte) map[string]any {
 	}
 	return got
 }
+
+func TestTraceScopesRequestCloudPlatformOnly(t *testing.T) {
+	// Regression guard for the metadata-server 403. Dropping back to the Cloud
+	// Trace API default scope (trace.append) makes Cloud Run's metadata server
+	// refuse the token request, and the refusal poisons every later token fetch
+	// on that instance — Firestore and friends start failing Unauthenticated.
+	want := []string{"https://www.googleapis.com/auth/cloud-platform"}
+	if len(traceScopes) != len(want) {
+		t.Fatalf("traceScopes = %v, want %v", traceScopes, want)
+	}
+	for i, scope := range traceScopes {
+		if scope != want[i] {
+			t.Errorf("traceScopes[%d] = %q, want %q", i, scope, want[i])
+		}
+	}
+}
