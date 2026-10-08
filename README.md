@@ -62,9 +62,41 @@ if permanent || slackthread.FinalAttempt(r) {
 - `FinalAttempt` compares `X-CloudTasks-TaskRetryCount` with
   `CLOUD_TASKS_MAX_ATTEMPTS` (default 5; set it to the queue's
   `max_attempts`). A request without the header is not from Cloud Tasks and
-  counts as final.
+  counts as final. **Requirement:** Cloud Tasks stops retrying only once both
+  `max_attempts` and `max_retry_duration` are reached, so the queue must leave
+  `max_retry_duration` unset or 0, `max_attempts` must be a finite positive
+  number (not `-1`, unlimited), `CLOUD_TASKS_MAX_ATTEMPTS` must equal it, and
+  tasks must not override the queue's retry settings.
+  Otherwise a failure can be posted early, more than once, or (when
+  `CLOUD_TASKS_MAX_ATTEMPTS` is higher than the queue's `max_attempts`) not
+  at all.
 - Every message is plain text: an emoji, a mention when `slack_user_id` is
   set, then one sentence. Times read `2026-10-08 14:02 UTC`.
+
+### How backends use this
+
+Cloud Tasks retries any non-2xx response, so status codes decide how often a
+failure is reported. For operations delivered by Cloud Tasks (GRANT, REVOKE,
+DOWNGRADE, firewall block/unblock):
+
+| Result | Status | Reply |
+|---|---|---|
+| Success | `200` | the matching outcome, once |
+| Permanent failure (bad payload, validation, or a non-retryable GCP error: 400, 403 permission denied, 404 not found) | `299`, a 2xx, so Cloud Tasks stops | `Failed`, once, straight away |
+| Transient failure (5xx, timeouts, and retryable 4xx: 408, 409 policy conflict, 429) | `503`, retried | `Failed` only when `FinalAttempt(r)` |
+| Auth failure | `403` | none: the payload is not trusted |
+| Undecodable body | `299` | none: there is no thread to reply to |
+
+Direct synchronous reads (groups `LIST_MANAGERS`, `LIST_USER_GROUPS`) keep
+`400` for bad input and never post.
+
+Queue requirement: `max_retry_duration` unset or 0, a finite positive
+`max_attempts`, and `CLOUD_TASKS_MAX_ATTEMPTS` set in terraform from the
+queue's `max_attempts`, so the two cannot drift.
+
+Duplicates: Cloud Tasks may rarely run a task twice, so a reply can appear
+twice. This is accepted, because deduping would need a shared store keyed by
+task name.
 
 ## Releases
 

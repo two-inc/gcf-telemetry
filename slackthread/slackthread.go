@@ -126,9 +126,16 @@ const defaultMaxAttempts = 5
 // request, so a failure should be reported now. A request without the retry
 // header did not come from Cloud Tasks and will not be retried.
 //
-// ponytail: compares X-CloudTasks-TaskRetryCount with CLOUD_TASKS_MAX_ATTEMPTS
-// and ignores the queue's max_retry_duration, so a queue that gives up on time
-// first never reports. Read the queue config instead if that starts to matter.
+// Cloud Tasks stops retrying only once BOTH max_attempts and max_retry_duration
+// are reached, so this is exact only when the queue leaves max_retry_duration
+// unset or 0, max_attempts is finite and positive (not -1, unlimited),
+// CLOUD_TASKS_MAX_ATTEMPTS equals it, and the task
+// does not override the queue's retry settings. Otherwise a failure can be
+// posted early, once per extra retry, or (when CLOUD_TASKS_MAX_ATTEMPTS is
+// higher than max_attempts) never.
+//
+// ponytail: relies on that queue config rather than reading it; read the queue
+// via the Cloud Tasks API instead if a queue ever needs a retry duration.
 func FinalAttempt(r *http.Request) bool {
 	header := r.Header.Get("X-CloudTasks-TaskRetryCount")
 	if header == "" {
@@ -156,6 +163,9 @@ const defaultTokenFile = "/etc/secrets/slack-bot/SLACK_BOT_TOKEN"
 // Post replies in the thread. It is best-effort: it never returns an error,
 // and a request with no thread is only logged. The token is read on every call
 // from SLACK_BOT_TOKEN_FILE, so a rotation needs no redeploy.
+//
+// ponytail: Cloud Tasks may rarely run a task twice, so a reply can appear
+// twice. Accepted: deduping would need a shared store keyed by task name.
 func Post(ctx context.Context, log *slog.Logger, prefix string, t Thread, r Reply) {
 	if log == nil {
 		log = slog.Default()
