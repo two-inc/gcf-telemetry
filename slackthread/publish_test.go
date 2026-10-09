@@ -154,3 +154,54 @@ func TestPublishRequestsOnlyCloudPlatformScope(t *testing.T) {
 		t.Errorf("pubSubScopes = %v, want only cloud-platform", pubSubScopes)
 	}
 }
+
+func TestPublishAlertSendsAlert(t *testing.T) {
+	got := fakePubSub(t, http.StatusOK)
+	logs := &bytes.Buffer{}
+	PublishAlert(context.Background(), slog.New(slog.NewJSONHandler(logs, nil)), "test_fn",
+		Source{Function: "ip-firewall-manager", TaskName: "t1"}, thread, "block",
+		Alert{
+			Title: "IP Block", Text: "IP address `1.2.3.4` blocked", Severity: "warning", TestMode: true,
+			Fields: []AlertField{{Title: "IP Address", Value: "1.2.3.4"}, {Title: "Project", Value: "tillit-api"}},
+			Button: &AlertButton{Text: "Unblock IP in tillit-api", ActionID: "unblock_ip_button", Value: "1.2.3.4;tillit-api"},
+		})
+
+	if len(*got) != 1 {
+		t.Fatalf("publishes = %d, want 1", len(*got))
+	}
+	m := (*got)[0].req.Messages[0]
+	if m.Attributes["outcome"] != "block" || m.Attributes["function"] != "ip-firewall-manager" {
+		t.Errorf("attributes = %v", m.Attributes)
+	}
+	raw, _ := base64.StdEncoding.DecodeString(m.Data)
+	// The exact JSON slack-bot's firewall_alerts reads.
+	var e map[string]any
+	if err := json.Unmarshal(raw, &e); err != nil {
+		t.Fatal(err)
+	}
+	alert, _ := e["alert"].(map[string]any)
+	if alert == nil || alert["title"] != "IP Block" || alert["severity"] != "warning" || alert["test_mode"] != true {
+		t.Fatalf("alert = %v", e["alert"])
+	}
+	if _, set := alert["warning"]; set {
+		t.Errorf("warning=false should be omitted: %v", alert)
+	}
+	fields, _ := alert["fields"].([]any)
+	if len(fields) != 2 || fields[0].(map[string]any)["title"] != "IP Address" || fields[1].(map[string]any)["value"] != "tillit-api" {
+		t.Errorf("fields = %v", alert["fields"])
+	}
+	button, _ := alert["button"].(map[string]any)
+	if button["action_id"] != "unblock_ip_button" || button["value"] != "1.2.3.4;tillit-api" || button["text"] != "Unblock IP in tillit-api" {
+		t.Errorf("button = %v", alert["button"])
+	}
+	if e["slack_thread_ts"] != "1.2" || e["task_name"] != "t1" || e["outcome"] != "block" {
+		t.Errorf("event = %v", e)
+	}
+}
+
+func TestPublishLeavesAlertUnset(t *testing.T) {
+	raw, _ := json.Marshal(NewEvent(Source{Function: "f"}, Thread{}, Reply{Outcome: Granted}))
+	if strings.Contains(string(raw), "alert") {
+		t.Errorf("non-firewall event carries an alert: %s", raw)
+	}
+}
