@@ -1,15 +1,11 @@
-// Package slackthread reports the result of a /two access request as a reply
-// in the Slack thread the request came from, posted as slack-bot. Every access
-// backend uses it, so the payload fields, the wording and the log events are
-// the same everywhere.
+// Package slackthread reports the result of a /two access request to slack-bot,
+// which replies in the Slack thread the request came from. Every access backend
+// uses it, so the payload fields, the wording and the log events are the same
+// everywhere.
 package slackthread
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
@@ -131,7 +127,7 @@ const defaultMaxAttempts = 5
 // unset or 0, max_attempts is finite and positive (not -1, unlimited),
 // CLOUD_TASKS_MAX_ATTEMPTS equals it, and the task
 // does not override the queue's retry settings. Otherwise a failure can be
-// posted early, once per extra retry, or (when CLOUD_TASKS_MAX_ATTEMPTS is
+// reported early, once per extra retry, or (when CLOUD_TASKS_MAX_ATTEMPTS is
 // higher than max_attempts) never.
 //
 // ponytail: relies on that queue config rather than reading it; read the queue
@@ -150,95 +146,4 @@ func FinalAttempt(r *http.Request) bool {
 		maxAttempts = v
 	}
 	return retries >= maxAttempts-1
-}
-
-// Overridable in tests.
-var (
-	PostMessageURL = "https://slack.com/api/chat.postMessage"
-	HTTPClient     = &http.Client{Timeout: 10 * time.Second}
-)
-
-const defaultTokenFile = "/etc/secrets/slack-bot/SLACK_BOT_TOKEN"
-
-// Post replies in the thread. It is best-effort: it never returns an error,
-// and a request with no thread is only logged. The token is read on every call
-// from SLACK_BOT_TOKEN_FILE, so a rotation needs no redeploy.
-//
-// ponytail: Cloud Tasks may rarely run a task twice, so a reply can appear
-// twice. Accepted: deduping would need a shared store keyed by task name.
-func Post(ctx context.Context, log *slog.Logger, prefix string, t Thread, r Reply) {
-	if log == nil {
-		log = slog.Default()
-	}
-	attrs := []any{
-		"slack_channel_id", t.ChannelID,
-		"slack_thread_ts", t.ThreadTS,
-		"slack_user_id", t.UserID,
-		"outcome", r.Outcome.String(),
-		"op", r.Op,
-	}
-	logWith := func(level slog.Level, event, message string, extra ...any) {
-		log.Log(ctx, level, prefix+".slack."+event, append(append([]any{"message", message}, extra...), attrs...)...)
-	}
-
-	if !t.Valid() {
-		logWith(slog.LevelInfo, "no_thread", "Request carries no Slack thread, result not reported to Slack")
-		return
-	}
-
-	tokenFile := os.Getenv("SLACK_BOT_TOKEN_FILE")
-	if tokenFile == "" {
-		tokenFile = defaultTokenFile
-	}
-	raw, err := os.ReadFile(tokenFile)
-	token := strings.TrimSpace(string(raw))
-	if err != nil || token == "" {
-		reason := "empty token file"
-		if err != nil {
-			reason = err.Error()
-		}
-		logWith(slog.LevelError, "token_unreadable", "Cannot read Slack bot token: "+reason)
-		return
-	}
-
-	body, err := json.Marshal(map[string]string{
-		"channel":   t.ChannelID,
-		"thread_ts": t.ThreadTS,
-		"text":      Text(t, r),
-	})
-	if err != nil {
-		logWith(slog.LevelError, "post_error", err.Error())
-		return
-	}
-
-	// Keep the trace, not the caller's cancellation: the operation already happened.
-	postCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(postCtx, http.MethodPost, PostMessageURL, bytes.NewReader(body))
-	if err != nil {
-		logWith(slog.LevelError, "post_error", err.Error())
-		return
-	}
-	req.Header.Set("Content-Type", "application/json; charset=utf-8")
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	resp, err := HTTPClient.Do(req)
-	if err != nil {
-		logWith(slog.LevelError, "post_error", err.Error())
-		return
-	}
-	defer resp.Body.Close()
-
-	// chat.postMessage answers 200 even when it refuses; only `ok` says it posted.
-	var slackResp struct {
-		OK    bool   `json:"ok"`
-		Error string `json:"error"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&slackResp); err != nil || !slackResp.OK {
-		logWith(slog.LevelError, "post_rejected", "Slack did not post the reply",
-			"status_code", resp.StatusCode, "slack_error", slackResp.Error)
-		return
-	}
-
-	logWith(slog.LevelInfo, "posted", "Result replied in the request thread")
 }
