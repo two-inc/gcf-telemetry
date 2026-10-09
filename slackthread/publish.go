@@ -109,9 +109,9 @@ var newPubSub = func(ctx context.Context) (*pubsub.Service, error) {
 }
 
 // Publish reports a result to ACCESS_RESULTS_TOPIC (default DefaultTopic). It is
-// best-effort like Post: it never returns an error, only logs. Unlike Post it
-// publishes even without a thread, because slack-bot also records the status
-// and ip-firewall-manager's results go to a fallback channel.
+// best-effort: it never returns an error, only logs. It publishes even without
+// a thread, because slack-bot also records the status and ip-firewall-manager's
+// results go to a fallback channel.
 func Publish(ctx context.Context, log *slog.Logger, prefix string, src Source, t Thread, r Reply) {
 	publishEvent(ctx, log, prefix, NewEvent(src, t, r))
 }
