@@ -127,6 +127,13 @@ slackthread.Publish(ctx, logger, "gcp_access_manager",
   runs twice publishes two messages with different message ids, so a consumer
   that should drop the second must key on `task_name` and `outcome`, not on
   the message id alone.
+- ip-firewall-manager uses `PublishAlert` instead: its event carries an
+  `alert` object (`title`, `text`, `fields` as `{title, value}`, `severity`,
+  `warning`, `test_mode`, `button` as `{text, action_id, value}`) that slack-bot
+  renders and routes as the function's own alert, fallback channel included.
+  Those names match slack-bot's `firewall_alerts`; keep the two in step. Its
+  `outcome` names the alert kind (`block`, `unblock_failed`, ...), so two alerts
+  from one task are not deduped into one.
 
 ## Releases
 

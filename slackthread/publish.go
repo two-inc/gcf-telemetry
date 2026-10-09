@@ -45,6 +45,34 @@ type Event struct {
 	SlackUserID    string `json:"slack_user_id,omitempty"`
 	Function       string `json:"function"`
 	TaskName       string `json:"task_name,omitempty"`
+	// Alert is set only by ip-firewall-manager: slack-bot renders and routes
+	// it as the function's own alert (slack_bot/firewall_alerts.py).
+	Alert *Alert `json:"alert,omitempty"`
+}
+
+// Alert is an ip-firewall-manager result as data. The JSON names are the ones
+// slack-bot's firewall_alerts reads; keep the two in step.
+type Alert struct {
+	Title    string       `json:"title,omitempty"`
+	Text     string       `json:"text,omitempty"`
+	Fields   []AlertField `json:"fields,omitempty"`
+	Severity string       `json:"severity,omitempty"` // "info", "warning" or "error"
+	Warning  bool         `json:"warning,omitempty"`  // routes a top-level post to the warnings channel
+	TestMode bool         `json:"test_mode,omitempty"`
+	Button   *AlertButton `json:"button,omitempty"`
+}
+
+// AlertField is one title/value pair in the alert's field grid.
+type AlertField struct {
+	Title string `json:"title"`
+	Value string `json:"value"`
+}
+
+// AlertButton is the alert's single action button.
+type AlertButton struct {
+	Text     string `json:"text"`
+	ActionID string `json:"action_id"`
+	Value    string `json:"value"`
 }
 
 // NewEvent builds the event for a reply.
@@ -85,18 +113,37 @@ var newPubSub = func(ctx context.Context) (*pubsub.Service, error) {
 // publishes even without a thread, because slack-bot also records the status
 // and ip-firewall-manager's results go to a fallback channel.
 func Publish(ctx context.Context, log *slog.Logger, prefix string, src Source, t Thread, r Reply) {
+	publishEvent(ctx, log, prefix, NewEvent(src, t, r))
+}
+
+// PublishAlert reports an ip-firewall-manager alert. outcome names the kind of
+// alert ("block", "unblock", "block_failed", ...): slack-bot dedupes on task
+// name plus outcome, so two alerts from one task need different outcomes.
+func PublishAlert(ctx context.Context, log *slog.Logger, prefix string, src Source, t Thread, outcome string, a Alert) {
+	publishEvent(ctx, log, prefix, Event{
+		RequestID:      src.RequestID,
+		Outcome:        outcome,
+		SlackChannelID: t.ChannelID,
+		SlackThreadTS:  t.ThreadTS,
+		SlackUserID:    t.UserID,
+		Function:       src.Function,
+		TaskName:       src.TaskName,
+		Alert:          &a,
+	})
+}
+
+func publishEvent(ctx context.Context, log *slog.Logger, prefix string, e Event) {
 	if log == nil {
 		log = slog.Default()
 	}
-	e := NewEvent(src, t, r)
 	attrs := []any{
-		"slack_channel_id", t.ChannelID,
-		"slack_thread_ts", t.ThreadTS,
-		"slack_user_id", t.UserID,
+		"slack_channel_id", e.SlackChannelID,
+		"slack_thread_ts", e.SlackThreadTS,
+		"slack_user_id", e.SlackUserID,
 		"outcome", e.Outcome,
-		"op", r.Op,
-		"request_id", src.RequestID,
-		"task_name", src.TaskName,
+		"op", e.Operation,
+		"request_id", e.RequestID,
+		"task_name", e.TaskName,
 	}
 	logWith := func(level slog.Level, event, message string, extra ...any) {
 		log.Log(ctx, level, prefix+".result."+event, append(append([]any{"message", message}, extra...), attrs...)...)
