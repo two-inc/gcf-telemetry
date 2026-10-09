@@ -98,6 +98,36 @@ Duplicates: Cloud Tasks may rarely run a task twice, so a reply can appear
 twice. This is accepted, because deduping would need a shared store keyed by
 task name.
 
+### Publishing results for slack-bot (`Publish`)
+
+`Publish` is replacing `Post` (PLAT-2588). It sends the same result as an
+event to the `access-results` Pub/Sub topic, and slack-bot, the only holder of
+the bot token, renders it, replies in the thread, updates its cards and records
+the real status. A backend then needs `pubsub.publisher` on that topic and no
+Slack token.
+
+```go
+slackthread.Publish(ctx, logger, "gcp_access_manager",
+    slackthread.Source{Function: "gcp-access-manager", RequestID: req.RequestID, TaskName: slackthread.TaskName(r)},
+    req.Thread, slackthread.Reply{Outcome: slackthread.Granted, Op: "GRANT", What: what, Until: &expiry})
+```
+
+- The topic is `ACCESS_RESULTS_TOPIC`, default
+  `projects/two-slack-bot/topics/access-results`. Credentials come from the
+  function's own service account.
+- The event carries facts, not wording: `request_id`, `operation`, `outcome`
+  (the `Outcome` name), `what`, `who`, `until` (RFC 3339, UTC), `error`, the
+  three Slack thread fields, `function` and `task_name`. Attributes repeat
+  `function`, `outcome` and `operation`.
+- It publishes even when the request has no thread, because slack-bot records
+  the status regardless and ip-firewall-manager posts to a fallback channel.
+- Best-effort like `Post`: it never returns an error. Log events:
+  `<prefix>.result.{published,publish_error}`.
+- Status codes and `FinalAttempt` apply exactly as above. A task Cloud Tasks
+  runs twice publishes two messages with different message ids, so a consumer
+  that should drop the second must key on `task_name` and `outcome`, not on
+  the message id alone.
+
 ## Releases
 
 Every push to `main` runs tests and then auto-bumps a patch tag via
