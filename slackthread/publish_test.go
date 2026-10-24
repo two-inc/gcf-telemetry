@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"google.golang.org/api/option"
 	pubsub "google.golang.org/api/pubsub/v1"
@@ -37,6 +38,17 @@ func TestNewEvent(t *testing.T) {
 	raw, _ := json.Marshal(NewEvent(Source{Function: "f"}, Thread{}, Reply{Outcome: Revoked}))
 	if string(raw) != `{"outcome":"revoked","function":"f"}` {
 		t.Errorf("empty fields not omitted: %s", raw)
+	}
+}
+
+func TestNewEventCarriesCappedReason(t *testing.T) {
+	e := NewEvent(Source{Function: "f"}, Thread{}, Reply{Outcome: Granted, Reason: "check audit entries arrive"})
+	if e.Reason != "check audit entries arrive" {
+		t.Errorf("reason %q", e.Reason)
+	}
+	long := strings.Repeat("a", MaxReason-1) + "é"
+	if got := NewEvent(Source{}, Thread{}, Reply{Reason: long}).Reason; len(got) > MaxReason || !utf8.ValidString(got) {
+		t.Errorf("reason not capped to valid UTF-8: %d bytes", len(got))
 	}
 }
 

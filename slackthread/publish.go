@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"google.golang.org/api/option"
@@ -33,13 +34,15 @@ func TaskName(r *http.Request) string {
 // Event is the message published for one result. slack-bot renders it, so the
 // fields carry facts rather than wording.
 type Event struct {
-	RequestID      string `json:"request_id,omitempty"`
-	Operation      string `json:"operation,omitempty"`
-	Outcome        string `json:"outcome"`
-	What           string `json:"what,omitempty"`
-	Who            string `json:"who,omitempty"`
-	Until          string `json:"until,omitempty"` // RFC 3339, UTC
-	Error          string `json:"error,omitempty"`
+	RequestID string `json:"request_id,omitempty"`
+	Operation string `json:"operation,omitempty"`
+	Outcome   string `json:"outcome"`
+	What      string `json:"what,omitempty"`
+	Who       string `json:"who,omitempty"`
+	Until     string `json:"until,omitempty"` // RFC 3339, UTC
+	Error     string `json:"error,omitempty"`
+	// Reason is the requester's reason, as typed, at most MaxReason bytes.
+	Reason         string `json:"reason,omitempty"`
 	SlackChannelID string `json:"slack_channel_id,omitempty"`
 	SlackThreadTS  string `json:"slack_thread_ts,omitempty"`
 	SlackUserID    string `json:"slack_user_id,omitempty"`
@@ -88,6 +91,7 @@ func NewEvent(src Source, t Thread, r Reply) Event {
 		SlackUserID:    t.UserID,
 		Function:       src.Function,
 		TaskName:       src.TaskName,
+		Reason:         capReason(r.Reason),
 	}
 	if r.Until != nil {
 		e.Until = r.Until.UTC().Format(time.RFC3339)
@@ -96,6 +100,16 @@ func NewEvent(src Source, t Thread, r Reply) Event {
 		e.Error = r.Err.Error()
 	}
 	return e
+}
+
+// MaxReason bounds the requester's free text carried on an event.
+const MaxReason = 500
+
+func capReason(s string) string {
+	if len(s) <= MaxReason {
+		return s
+	}
+	return strings.ToValidUTF8(s[:MaxReason], "")
 }
 
 // cloud-platform only: Cloud Run's metadata server refuses the Pub/Sub API's

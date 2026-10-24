@@ -58,6 +58,9 @@ type Reply struct {
 	Who     string     // principal, used by Kept only
 	Until   *time.Time // Granted only
 	Err     error      // Failed and Partial; for Partial, the parts that failed and why
+	// Reason is the requester's own reason for the request, passed on so
+	// grant-auditor can compare the activity with it. Free text, capped.
+	Reason string
 }
 
 // FormatTime renders a time the way every reply does: "2026-10-08 14:02 UTC".
