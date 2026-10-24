@@ -100,8 +100,9 @@ queue's `max_attempts`, so the two cannot drift.
   function's own service account.
 - The event carries facts, not wording: `request_id`, `operation`, `outcome`
   (the `Outcome` name), `what`, `who`, `until` (RFC 3339, UTC), `error`, the
-  three Slack thread fields, `function` and `task_name`. Attributes repeat
-  `function`, `outcome` and `operation`.
+  three Slack thread fields, `function`, `task_name` and `reason` (the
+  requester's own reason, capped at 500 bytes, which grant-auditor compares the
+  activity with). Attributes repeat `function`, `outcome` and `operation`.
 - It publishes even when the request has no thread, because slack-bot records
   the status regardless and posts ip-firewall-manager's alerts to a fallback
   channel.
